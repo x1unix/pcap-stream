@@ -22,8 +22,6 @@ import (
 
 type packetFilterConfig struct {
 	packetDstPort         int
-	packetSrcIP           net.IP
-	packetSrcIPConfigured bool
 	packetExcludeLoopback bool
 }
 
@@ -109,7 +107,6 @@ func runReplayCommand(args []string) error {
 	sendTarget := fs.String("send-target", "", "")
 	sendProto := fs.String("send-proto", "tcp", "")
 	packetDstPort := fs.Int("packet-dst-port", 0, "")
-	packetSrcIP := fs.String("packet-src-ip", "", "")
 	packetExcludeLoopback := fs.Bool("packet-exclude-loopback", true, "")
 	dryRun := fs.Bool("dry-run", false, "")
 
@@ -157,15 +154,6 @@ func runReplayCommand(args []string) error {
 		},
 	}
 
-	if *packetSrcIP != "" {
-		parsed := net.ParseIP(*packetSrcIP)
-		if parsed == nil {
-			return fmt.Errorf("invalid --packet-src-ip: %q", *packetSrcIP)
-		}
-		cfg.filter.packetSrcIP = parsed
-		cfg.filter.packetSrcIPConfigured = true
-	}
-
 	stats, replayErr := replayFromPCAP(cfg)
 	printReplaySummary(cfg, stats)
 
@@ -187,7 +175,6 @@ func runDumpCommand(args []string) error {
 	pcapPath := fs.String("pcap", "", "")
 	outFile := fs.String("out-file", "", "")
 	packetDstPort := fs.Int("packet-dst-port", 0, "")
-	packetSrcIP := fs.String("packet-src-ip", "", "")
 	packetExcludeLoopback := fs.Bool("packet-exclude-loopback", true, "")
 
 	if err := fs.Parse(args); err != nil {
@@ -204,8 +191,11 @@ func runDumpCommand(args []string) error {
 	if *outFile == "" {
 		return errors.New("--out-file is required")
 	}
+	if *packetDstPort == 0 {
+		return errors.New("--packet-dst-port is required")
+	}
 
-	if *packetDstPort < 0 || *packetDstPort > 65535 {
+	if *packetDstPort < 1 || *packetDstPort > 65535 {
 		return fmt.Errorf("--packet-dst-port out of range: %d", *packetDstPort)
 	}
 
@@ -216,15 +206,6 @@ func runDumpCommand(args []string) error {
 			packetDstPort:         *packetDstPort,
 			packetExcludeLoopback: *packetExcludeLoopback,
 		},
-	}
-
-	if *packetSrcIP != "" {
-		parsed := net.ParseIP(*packetSrcIP)
-		if parsed == nil {
-			return fmt.Errorf("invalid --packet-src-ip: %q", *packetSrcIP)
-		}
-		cfg.filter.packetSrcIP = parsed
-		cfg.filter.packetSrcIPConfigured = true
 	}
 
 	stats, dumpErr := dumpFromPCAP(cfg)
@@ -414,11 +395,6 @@ func collectReassembledFlows(pcapPath string, filter packetFilterConfig) ([]reas
 
 		if filter.packetExcludeLoopback && (srcIP.IsLoopback() || dstIP.IsLoopback()) {
 			stats.skipped["loopback_excluded"]++
-			continue
-		}
-
-		if filter.packetSrcIPConfigured && !filter.packetSrcIP.Equal(srcIP) {
-			stats.skipped["src_ip_mismatch"]++
 			continue
 		}
 
@@ -783,9 +759,6 @@ func printReplaySummary(cfg replayConfig, stats replayStats) {
 	fmt.Printf("send target: %s\n", cfg.sendTarget)
 	fmt.Printf("send proto: %s\n", cfg.sendProto)
 	fmt.Printf("packet dst port filter: %d\n", cfg.filter.packetDstPort)
-	if cfg.filter.packetSrcIPConfigured {
-		fmt.Printf("packet src ip filter: %s\n", cfg.filter.packetSrcIP.String())
-	}
 	fmt.Printf("packet exclude loopback: %t\n", cfg.filter.packetExcludeLoopback)
 	fmt.Println()
 
@@ -831,14 +804,7 @@ func printDumpSummary(cfg dumpConfig, stats replayStats) {
 	fmt.Printf("pcap link type: %d\n", stats.pcapLinkType)
 	fmt.Printf("gopacket link type: %s\n", stats.decoderLinkType)
 	fmt.Printf("out file: %s\n", cfg.outFile)
-	if cfg.filter.packetDstPort > 0 {
-		fmt.Printf("packet dst port filter: %d\n", cfg.filter.packetDstPort)
-	} else {
-		fmt.Printf("packet dst port filter: (none)\n")
-	}
-	if cfg.filter.packetSrcIPConfigured {
-		fmt.Printf("packet src ip filter: %s\n", cfg.filter.packetSrcIP.String())
-	}
+	fmt.Printf("packet dst port filter: %d\n", cfg.filter.packetDstPort)
 	fmt.Printf("packet exclude loopback: %t\n", cfg.filter.packetExcludeLoopback)
 	fmt.Println()
 

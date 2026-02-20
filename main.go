@@ -57,7 +57,6 @@ func printReplayUsage() {
 	fs.String("send-target", "", "Replay destination host:port (required)")
 	fs.String("send-proto", "tcp", "Replay destination protocol: tcp or udp")
 	fs.Int("packet-dst-port", 0, "Packet destination TCP port filter (default: send-target port)")
-	fs.String("packet-src-ip", "", "Packet source IP filter")
 	fs.Bool("packet-exclude-loopback", true, "Exclude packet traffic with loopback src or dst")
 	fs.Bool("dry-run", false, "Analyze and reconstruct streams without sending")
 
@@ -76,8 +75,7 @@ func printDumpUsage() {
 
 	fs.String("pcap", "", "Path to .pcap file (required)")
 	fs.String("out-file", "", "Path to output log file (required)")
-	fs.Int("packet-dst-port", 0, "Packet destination TCP port filter (optional)")
-	fs.String("packet-src-ip", "", "Packet source IP filter")
+	fs.Int("packet-dst-port", 0, "Packet destination TCP port filter (required)")
 	fs.Bool("packet-exclude-loopback", true, "Exclude packet traffic with loopback src or dst")
 
 	fs.Usage()
