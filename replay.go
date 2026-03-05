@@ -34,9 +34,10 @@ type replayConfig struct {
 }
 
 type dumpConfig struct {
-	pcapPath string
-	outFile  string
-	filter   packetFilterConfig
+	pcapPath      string
+	outFile       string
+	splitMessages bool
+	filter        packetFilterConfig
 }
 
 type replayStats struct {
@@ -51,7 +52,6 @@ type replayStats struct {
 	bytesDumped          int64
 	messagesExtracted    int64
 	messagesSent         int64
-	messagesDumped       int64
 	reassemblyGaps       int64
 	duplicateSegments    int64
 	pcapLinkType         uint32
@@ -174,6 +174,7 @@ func runDumpCommand(args []string) error {
 
 	pcapPath := fs.String("pcap", "", "")
 	outFile := fs.String("out-file", "", "")
+	splitMessages := fs.Bool("split-messages", false, "")
 	packetDstPort := fs.Int("packet-dst-port", 0, "")
 	packetExcludeLoopback := fs.Bool("packet-exclude-loopback", true, "")
 
@@ -200,8 +201,9 @@ func runDumpCommand(args []string) error {
 	}
 
 	cfg := dumpConfig{
-		pcapPath: *pcapPath,
-		outFile:  *outFile,
+		pcapPath:      *pcapPath,
+		outFile:       *outFile,
+		splitMessages: *splitMessages,
 		filter: packetFilterConfig{
 			packetDstPort:         *packetDstPort,
 			packetExcludeLoopback: *packetExcludeLoopback,
@@ -312,13 +314,37 @@ func dumpFromPCAP(cfg dumpConfig) (replayStats, error) {
 	writer := bufio.NewWriter(outFile)
 
 	for i := range flows {
-		messages := extractSyslogMessages(flows[i].payload)
-		stats.messagesExtracted += int64(len(messages))
+		payload := flows[i].payload
+		if len(payload) == 0 {
+			continue
+		}
+
+		if !cfg.splitMessages {
+			n, writeErr := writer.Write(payload)
+			stats.bytesDumped += int64(n)
+			if writeErr != nil {
+				return stats, fmt.Errorf("write output file: %w", writeErr)
+			}
+			continue
+		}
+
+		messages, octetCounting := parseRFC6587OctetCounting(payload)
+		if !octetCounting {
+			messages = splitNewlineMessages(payload)
+		}
 
 		for j := range messages {
 			message := messages[j]
 			if len(message) == 0 {
 				continue
+			}
+
+			if octetCounting {
+				hn, writeErr := writer.WriteString(strconv.Itoa(len(message)) + " ")
+				stats.bytesDumped += int64(hn)
+				if writeErr != nil {
+					return stats, fmt.Errorf("write output file: %w", writeErr)
+				}
 			}
 
 			n, writeErr := writer.Write(message)
@@ -331,7 +357,6 @@ func dumpFromPCAP(cfg dumpConfig) (replayStats, error) {
 				return stats, fmt.Errorf("write output file: %w", err)
 			}
 			stats.bytesDumped++
-			stats.messagesDumped++
 		}
 	}
 
@@ -812,7 +837,6 @@ func printDumpSummary(cfg dumpConfig, stats replayStats) {
 	fmt.Printf("packets matched: %d\n", stats.packetsMatched)
 	fmt.Printf("streams detected: %d\n", stats.streamsDetected)
 	fmt.Printf("streams reconstructed: %d\n", stats.streamsReconstructed)
-	fmt.Printf("messages dumped: %d\n", stats.messagesDumped)
 	fmt.Printf("bytes dumped: %d\n", stats.bytesDumped)
 
 	if len(stats.skipped) > 0 {

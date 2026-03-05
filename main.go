@@ -75,6 +75,7 @@ func printDumpUsage() {
 
 	fs.String("pcap", "", "Path to .pcap file (required)")
 	fs.String("out-file", "", "Path to output log file (required)")
+	fs.Bool("split-messages", false, "Split messages by framing type (octet-counting or newline)")
 	fs.Int("packet-dst-port", 0, "Packet destination TCP port filter (required)")
 	fs.Bool("packet-exclude-loopback", true, "Exclude packet traffic with loopback src or dst")
 

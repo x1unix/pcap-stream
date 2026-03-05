@@ -1,5 +1,6 @@
 /pcap-stream
 *.txt
+*.pcap
 
 .vscode
 .idea
