@@ -11,45 +11,53 @@ Build a standalone CLI in `pcap-stream` that replays syslog traffic from a `.pca
 
 ## CLI design
 
-### Command
-- `pcap-stream replay`
+### Commands
+- `pcap-stream replay` — reassemble and send traffic to a target
+- `pcap-stream dump` — reassemble and write traffic to a file
 
-### Required flags
-- `--pcap <path>`
-- `--send-target <host:port>`
+### replay flags
+- `--pcap <path>` (required)
+- `--send-target <host:port>` (required)
+- `--send-proto <tcp|udp>` — default: `tcp`
+- `--packet-dst-port <port>` — optional, defaults to port from `--send-target`
+- `--packet-exclude-loopback` — default: `true`
+- `--dry-run` — analyze and reconstruct without sending
 
-### Packet-filter flags (explicit `packet-` prefix)
-- `--packet-dst-port <port>`
-  - Optional
-  - Defaults to the port parsed from `--send-target`
-- `--packet-src-ip <ip>`
-  - Optional
-- `--packet-exclude-loopback`
-  - Optional, default: `true`
-  - Excludes `127.0.0.0/8` source or destination packets
-
-### Other behavior flags
-- `--dry-run` (analyze only, do not send)
-- (optional follow-up) `--verbose` for detailed stream/filter diagnostics
+### dump flags
+- `--pcap <path>` (required)
+- `--out-file <path>` (required)
+- `--packet-dst-port <port>` (required)
+- `--packet-exclude-loopback` — default: `true`
+- `--split-messages` — split output by framing type instead of writing raw streams
 
 ## Replay behavior
 1. Read pcap with `gopacket/pcapgo`.
-2. Decode packet layers.
+2. Decode packet layers (Ethernet, Linux SLL2, IPv4, IPv6, TCP).
 3. Keep only TCP payload packets matching packet filters.
-4. Group payload by TCP flow direction (`srcIP:srcPort -> dstIP:dstPort`) for client-to-server streams.
-5. Reassemble byte stream per flow in sequence order.
-6. Open TCP connection(s) to `--send-target`.
-7. Write reassembled payload bytes to target.
-8. Print replay summary:
-   - packets seen
-   - packets matched filters
-   - streams reconstructed
-   - bytes replayed
-   - skipped packets/reasons
+4. Group payload by TCP flow (`srcIP:srcPort -> dstIP:dstPort`).
+5. Reassemble byte stream per flow in sequence order (gap and duplicate tracking).
+6. For TCP: write each reassembled stream to the target as a single connection.
+7. For UDP: extract individual syslog messages via framing detection and send as datagrams.
+8. Print replay summary.
+
+## Dump behavior
+1. Reassemble flows identically to replay.
+2. Without `--split-messages`: write all reassembled stream bytes concatenated into the output file.
+3. With `--split-messages`: detect framing per flow.
+   - RFC6587 octet-counting detected: write each message as `<count> <message>\n`, preserving the original prefix.
+   - Non-transparent (newline-delimited): split on `\n` and write each message on its own line.
+
+## Syslog framing detection
+`extractSyslogMessages` tries in order:
+1. RFC6587 octet-counting: leading decimal count followed by space.
+2. Newline-delimited: split on `\n`.
+3. Fallback: treat entire payload as single message.
+
+Dump's `--split-messages` uses the same detection order but handles RFC6587 separately to preserve the octet-count prefix in output.
 
 ## Duplicate safety
-- Default behavior should skip loopback traffic (`--packet-exclude-loopback=true`).
-- Users can explicitly constrain sender with `--packet-src-ip 100.64.255.36`.
+- Default behavior skips loopback traffic (`--packet-exclude-loopback=true`).
+- Use `--packet-dst-port` to restrict to the relevant service port.
 
 ## Validation plan
 
@@ -66,36 +74,20 @@ Build a standalone CLI in `pcap-stream` that replays syslog traffic from a `.pca
   - expected `loki_source_syslog_parsing_errors_total` behavior
   - logs visible downstream (e.g., `loki.echo` or Loki query)
 
-## Example usage
+## Implementation status
+- [x] Add `github.com/google/gopacket` dependency
+- [x] CLI entrypoint and flag parsing (`replay`, `dump`)
+- [x] Packet decode/filter pipeline (Ethernet, Linux SLL2, IPv4/IPv6, TCP)
+- [x] TCP flow reassembly with gap and duplicate detection
+- [x] TCP replay
+- [x] UDP replay with syslog message extraction
+- [x] Dry-run mode and summary reporting
+- [x] `dump` command with raw stream output
+- [x] `--split-messages` with framing-aware output (preserves RFC6587 prefix)
+- [ ] README documentation
 
-```bash
-pcap-stream replay \
-  --pcap ../escalations/syslog/capture.pcap \
-  --send-target 127.0.0.1:51898 \
-  --packet-src-ip 100.64.255.36 \
-  --packet-exclude-loopback \
-  --dry-run
-```
-
-```bash
-pcap-stream replay \
-  --pcap ../escalations/syslog/capture.pcap \
-  --send-target 127.0.0.1:51898 \
-  --packet-src-ip 100.64.255.36 \
-  --packet-exclude-loopback
-```
-
-## Implementation steps
-1. Add dependencies in `pcap-stream/go.mod`:
-   - `github.com/google/gopacket`
-2. Implement CLI entrypoint and flag parsing.
-3. Implement packet decode/filter pipeline.
-4. Implement TCP flow reassembly and replay.
-5. Implement dry-run and summary reporting.
-6. Test with `capture.pcap`.
-7. Document known limitations and usage notes in `README.md` (follow-up).
-
-## Known limitations (initial version)
-- TCP-only replay (no UDP replay initially).
-- No exact original timing replay in v1 (best-effort stream replay only).
+## Known limitations
+- No exact original timing replay (best-effort stream replay).
 - If pcap has packet loss or out-of-order gaps, replay may be incomplete for affected streams.
+- pcapng format not supported; convert to pcap first (`tshark -F pcap`).
+- No deduplication of log messages.
